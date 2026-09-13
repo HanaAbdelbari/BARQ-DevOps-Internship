@@ -20,7 +20,6 @@ Exit codes:
 """
 import argparse
 import json
-import socket
 import subprocess
 import sys
 import time
@@ -129,20 +128,31 @@ def check_readiness(base_url):
 
 
 def check_prohibited_ports():
-    """Verify PostgreSQL and Redis ports are NOT published on the host."""
-    prohibited = {"postgres": 15432, "redis": 16379, "postgres-default": 5432, "redis-default": 6379}
+    """Verify our postgres/redis containers specifically do NOT publish ports to the
+    host. Uses `docker port` against the named containers rather than scanning host
+    ports directly, because scanning raw host ports (e.g. 5432, 6379) can produce
+    false positives if an unrelated service (e.g. a locally-installed PostgreSQL)
+    happens to already be listening on that port for reasons unconnected to this
+    project's docker-compose.yml."""
     all_closed = True
-    for name, port in prohibited.items():
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.settimeout(1)
+    for container in ("postgres", "redis"):
         try:
-            result = sock.connect_ex(("127.0.0.1", port))
-            is_closed = result != 0
+            proc = subprocess.run(
+                ["docker", "port", container],
+                capture_output=True, text=True, timeout=10
+            )
+            published = proc.stdout.strip()
+            is_closed = published == ""
             all_closed = all_closed and is_closed
-            record(f"Host port {port} ({name}) is NOT published", is_closed,
-                   "closed" if is_closed else "OPEN - violates isolation requirement")
-        finally:
-            sock.close()
+            record(f"Container '{container}' publishes no host ports", is_closed,
+                   "no published ports" if is_closed else f"OPEN - {published}")
+        except FileNotFoundError:
+            record(f"Container '{container}' publishes no host ports", False,
+                   "docker CLI not found - cannot verify")
+            all_closed = False
+        except Exception as exc:
+            record(f"Container '{container}' publishes no host ports", False, f"error: {exc}")
+            all_closed = False
     return all_closed
 
 

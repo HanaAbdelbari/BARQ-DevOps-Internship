@@ -91,7 +91,7 @@ jobs:
       # --- Extra credit: image security scan (optional) ---
       - name: Scan images with Trivy
         if: always()
-        uses: aquasecurity/trivy-action@0.24.0
+        uses: aquasecurity/trivy-action@master
         with:
           image-ref: "barq-assessment-app-01"
           format: "table"

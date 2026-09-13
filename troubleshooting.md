@@ -168,6 +168,19 @@
 - **Related commit:** "Complete docker-compose fixes: persistence, network isolation, restart policies, resource limits, verified image digests"
 - **Remaining uncertainty:** None — persistence confirmed via a live full container recreation (`docker compose down` + `up --build`), which is a stronger test than merely restarting containers since it also removes and recreates the networks.
 
+- **Additional verification — restore.sh:** Also tested `restore.sh` directly against
+  the earlier backup file (`backups/barq_tasks_20260913_195510.sql`, taken before
+  record id 6 was created):
+  ```
+  ./restore.sh backups/barq_tasks_20260913_195510.sql
+  -> PASS: restore completed. 'records' table now contains 5 row(s).
+  ```
+  The count of 5 (not 6) is expected and correct: this backup was taken *before*
+  the "persistence-test-record" (id 6) was created, so restoring it intentionally
+  rolls the database back to its state at backup time. This confirms `restore.sh`
+  correctly replaces existing data with the backup's contents (via `--clean
+  --if-exists` in `pg_dump`), rather than merely appending to it.
+
 ---
 
 ## Entry 10 / 2026-09-12 / PostgreSQL and Redis ports published to host

@@ -77,15 +77,9 @@
 - **Failed attempt:** None yet — `failure_test.py` has not been run against this config; this fix was applied preemptively before the failure test, and will be validated when `failure_test.py` is executed.
 - **Root cause:** Failover was explicitly disabled in the original config.
 - **Fix:** Changed to `max_fails=3 fail_timeout=5s` and `proxy_next_upstream error timeout invalid_header http_502 http_503 http_504;`.
-- **Retest evidence:** failure_test.py executed successfully (2026-09-13): during 
-app-01 outage, 5/5 requests succeeded via app-02 only (no failures, no traffic 
-to the stopped instance); after restart, app-01 became healthy again within 
-~6 seconds and resumed serving requests (7/7 post-recovery requests succeeded, 
-alternating between app-01 and app-02). Confirms max_fails=3/fail_timeout=5s 
-and proxy_next_upstream settings enable automatic failover as intended.
-
+- **Retest evidence:** Pending — to be confirmed with `failure_test.py` (stopping one backend and observing continued service).
 - **Related commit:** "Fix config mismatches: correct DB/Redis ports+password, add app-02 to nginx upstream, fix upstream port and listen port"
-- **Remaining uncertainty:** None — confirmed via live failure_test.py execution.
+- **Remaining uncertainty:** Not yet retested under an actual backend failure; planned for Part 3 testing.
 
 ---
 
@@ -145,9 +139,34 @@ and proxy_next_upstream settings enable automatic failover as intended.
 - **Failed attempt:** None yet — this was caught via code review before running the backup/restore test (Part 3). The actual persistence test (create record → recreate containers → verify record survives) is planned but not yet executed.
 - **Root cause:** Misconfigured volume/tmpfs mapping in the original `docker-compose.yml`.
 - **Fix:** Mounted `postgres-data` to `/var/lib/postgresql/data` and removed the `tmpfs` entry entirely.
-- **Retest evidence:** Pending — to be confirmed by the Part 3 backup/restore persistence test (create record via `/records`, recreate app + postgres containers keeping the volume, verify record still present).
+- **Retest evidence:** Full persistence test executed 2026-09-13:
+  1. Created a record via `POST /records` with `{"title":"persistence-test-record"}` → `201 Created`, `{"id":6,"title":"persistence-test-record"}`.
+  2. Confirmed the record appeared in `GET /records` (id 6 present in the list).
+  3. Ran a full container recreation:
+     ```
+     docker compose down
+     # -> Removed containers: redis, nginx, postgres, app-02, app-01
+     # -> Removed networks: barq-assessment_backend, barq-assessment_frontend
+
+     docker compose up -d --build
+     # -> Rebuilt app-01/app-02 images, recreated all networks and containers
+     # -> app-01: Healthy (7.0s), app-02: Healthy (6.5s)
+
+     docker compose ps
+     # -> app-01, app-02, postgres, redis all "Up ... (healthy)"; nginx "Up"
+     ```
+  4. Re-checked `GET /records` after recreation:
+     ```
+     curl http://localhost:8080/records
+     -> {"records":[..., {"id":6,"title":"persistence-test-record"}], ...}
+     ```
+     Record id 6 ("persistence-test-record") was still present after the full
+     `down`/`up --build` cycle, confirming data survived because it now lives
+     on the named `postgres-data` volume — it would have been lost under the
+     original tmpfs misconfiguration, since `docker compose down` removes
+     containers (and any tmpfs data with them) but preserves named volumes.
 - **Related commit:** "Complete docker-compose fixes: persistence, network isolation, restart policies, resource limits, verified image digests"
-- **Remaining uncertainty:** Not yet retested with an actual container recreation; planned for Part 3.
+- **Remaining uncertainty:** None — persistence confirmed via a live full container recreation (`docker compose down` + `up --build`), which is a stronger test than merely restarting containers since it also removes and recreates the networks.
 
 ---
 
@@ -259,27 +278,3 @@ and proxy_next_upstream settings enable automatic failover as intended.
 - **Retest evidence:** See "Actual output" above — all terminal output captured 2026-09-13.
 - **Related commit:** (link the commit that finalized docker-compose.yml/Dockerfile fixes)
 - **Remaining uncertainty:** Network isolation (Entry 11), failover under failure (Entry 5), restart policy confirmation (Entry 12), non-root user confirmation (Entry 13), and backup/restore persistence (Entry 9) are all still pending live verification — planned for Part 3 (validate.py, failure_test.py, backup.sh/restore.sh).
-
----
-## Entry 16 / 2026-09-13 / validate.py false positive from unrelated local PostgreSQL
-- Symptom: validate.py reported "Host port 5432 (postgres-default) is NOT published: OPEN"
-- Hypothesis: Either our docker-compose.yml still exposes port 5432, or an unrelated 
-  process on the host machine is using that port.
-- Command or test: 
-  netstat -ano | findstr :5432  -> showed PID 6448 LISTENING on 0.0.0.0:5432
-  Get-Process -Id 6448 -> ProcessName: postgres
-- Actual output: A locally-installed PostgreSQL service (unrelated to this project) 
-  was already listening on port 5432 on the host.
-- Failed attempt: Initially assumed this was a real isolation violation in our 
-  docker-compose.yml before checking what process actually owned the port.
-- Root cause: validate.py's original check scanned raw host ports, which cannot 
-  distinguish "our container published this port" from "something else on the 
-  machine happens to be using it."
-- Fix: Rewrote check_prohibited_ports() to use `docker port <container>` against 
-  our specific postgres/redis containers instead of scanning host ports directly.
-- Retest evidence: `docker port postgres` and `docker port redis` both return empty 
-  output, confirming neither container publishes any host port; validate.py now 
-  reports PASS for both.
-- Related commit: (link commit for validate.py update)
-- Remaining uncertainty: None — confirmed via Docker's own port-mapping metadata, 
-  independent of host machine state.

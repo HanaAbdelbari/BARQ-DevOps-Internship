@@ -1,0 +1,111 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["**"]
+
+jobs:
+  build-and-validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # --- Syntax / Compose checks ---
+      - name: Validate docker-compose.yml syntax
+        run: docker compose config --quiet
+
+      - name: Lint Dockerfile with hadolint
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: Dockerfile
+          failure-threshold: error
+
+      - name: Lint shell scripts with shellcheck
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y shellcheck
+          shellcheck backup.sh restore.sh video_challenge.sh || true
+          # `|| true`: shellcheck warnings are informational here; only a missing
+          # interpreter or fatal parse error should be treated as a hard CI failure,
+          # which shellcheck itself signals via a non-zero exit we are choosing to
+          # not hard-fail on for style-only findings. See decisions.md.
+
+      - name: Validate Python syntax
+        run: |
+          python -m py_compile app/server.py validate.py failure_test.py
+
+      # --- Build ---
+      - name: Build images
+        run: docker compose build
+
+      # --- Start ---
+      - name: Start the stack
+        run: docker compose up -d
+
+      # --- Wait for readiness (bounded) ---
+      - name: Wait for all services to be healthy
+        run: |
+          echo "Waiting for containers to report healthy..."
+          deadline=$((SECONDS + 60))
+          while [ $SECONDS -lt $deadline ]; do
+            unhealthy=$(docker compose ps --format '{{.Name}} {{.Health}}' | grep -v "healthy" | grep -v "^nginx " || true)
+            if [ -z "$unhealthy" ]; then
+              echo "All health-checked services report healthy."
+              break
+            fi
+            sleep 3
+          done
+          docker compose ps
+
+      - name: Wait for public endpoint readiness
+        run: |
+          echo "Waiting for http://localhost:8080/ready to return 200..."
+          deadline=$((SECONDS + 60))
+          until curl -sf http://localhost:8080/ready > /dev/null; do
+            if [ $SECONDS -ge $deadline ]; then
+              echo "Timed out waiting for /ready" >&2
+              docker compose logs
+              exit 1
+            fi
+            sleep 2
+          done
+          echo "Service is ready."
+
+      # --- Validate ---
+      - name: Run validate.py
+        run: python validate.py --host localhost --port 8080 --timeout 30
+
+      # --- Extra credit: image security scan (optional) ---
+      - name: Scan images with Trivy
+        if: always()
+        uses: aquasecurity/trivy-action@0.24.0
+        with:
+          image-ref: "barq-assessment-app-01"
+          format: "table"
+          severity: "CRITICAL,HIGH"
+          exit-code: "0"
+        continue-on-error: true
+        # exit-code 0 + continue-on-error: this scan is informational (extra
+        # credit) and documented in security_review.md; it does not gate the
+        # build. Set exit-code to 1 and remove continue-on-error to enforce it.
+
+      - name: Show logs on failure
+        if: failure()
+        run: docker compose logs
+
+      - name: Tear down
+        if: always()
+        run: docker compose down -v

@@ -253,3 +253,27 @@
 - **Retest evidence:** See "Actual output" above — all terminal output captured 2026-09-13.
 - **Related commit:** (link the commit that finalized docker-compose.yml/Dockerfile fixes)
 - **Remaining uncertainty:** Network isolation (Entry 11), failover under failure (Entry 5), restart policy confirmation (Entry 12), non-root user confirmation (Entry 13), and backup/restore persistence (Entry 9) are all still pending live verification — planned for Part 3 (validate.py, failure_test.py, backup.sh/restore.sh).
+
+---
+## Entry 16 / 2026-09-13 / validate.py false positive from unrelated local PostgreSQL
+- Symptom: validate.py reported "Host port 5432 (postgres-default) is NOT published: OPEN"
+- Hypothesis: Either our docker-compose.yml still exposes port 5432, or an unrelated 
+  process on the host machine is using that port.
+- Command or test: 
+  netstat -ano | findstr :5432  -> showed PID 6448 LISTENING on 0.0.0.0:5432
+  Get-Process -Id 6448 -> ProcessName: postgres
+- Actual output: A locally-installed PostgreSQL service (unrelated to this project) 
+  was already listening on port 5432 on the host.
+- Failed attempt: Initially assumed this was a real isolation violation in our 
+  docker-compose.yml before checking what process actually owned the port.
+- Root cause: validate.py's original check scanned raw host ports, which cannot 
+  distinguish "our container published this port" from "something else on the 
+  machine happens to be using it."
+- Fix: Rewrote check_prohibited_ports() to use `docker port <container>` against 
+  our specific postgres/redis containers instead of scanning host ports directly.
+- Retest evidence: `docker port postgres` and `docker port redis` both return empty 
+  output, confirming neither container publishes any host port; validate.py now 
+  reports PASS for both.
+- Related commit: (link commit for validate.py update)
+- Remaining uncertainty: None — confirmed via Docker's own port-mapping metadata, 
+  independent of host machine state.

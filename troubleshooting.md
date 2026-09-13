@@ -77,9 +77,15 @@
 - **Failed attempt:** None yet — `failure_test.py` has not been run against this config; this fix was applied preemptively before the failure test, and will be validated when `failure_test.py` is executed.
 - **Root cause:** Failover was explicitly disabled in the original config.
 - **Fix:** Changed to `max_fails=3 fail_timeout=5s` and `proxy_next_upstream error timeout invalid_header http_502 http_503 http_504;`.
-- **Retest evidence:** Pending — to be confirmed with `failure_test.py` (stopping one backend and observing continued service).
+- **Retest evidence:** failure_test.py executed successfully (2026-09-13): during 
+app-01 outage, 5/5 requests succeeded via app-02 only (no failures, no traffic 
+to the stopped instance); after restart, app-01 became healthy again within 
+~6 seconds and resumed serving requests (7/7 post-recovery requests succeeded, 
+alternating between app-01 and app-02). Confirms max_fails=3/fail_timeout=5s 
+and proxy_next_upstream settings enable automatic failover as intended.
+
 - **Related commit:** "Fix config mismatches: correct DB/Redis ports+password, add app-02 to nginx upstream, fix upstream port and listen port"
-- **Remaining uncertainty:** Not yet retested under an actual backend failure; planned for Part 3 testing.
+- **Remaining uncertainty:** None — confirmed via live failure_test.py execution.
 
 ---
 

@@ -4,6 +4,7 @@
 
 ## Overview
 Comprehensive operational and technical guide for the **BARQ DevOps Lab** system, which features a Flask application (distributed across two instances, `app-01` and `app-02`), a PostgreSQL database, a Redis caching service, and an NGINX reverse proxy configured with advanced security standards, network isolation, and data persistence.
+video link : https://drive.google.com/drive/folders/1BBgj4G-S5o7YZ3s-8iOkOsr4FyG0wY76?usp=drive_link
 
 ---
 
